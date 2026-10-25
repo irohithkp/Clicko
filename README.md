@@ -2,7 +2,7 @@
 
 **Latest version:** v0.3.0
 
-Download `Clicko-Setup-v0.3.0.exe` from the [GitHub Releases](YOUR_GITHUB_RELEASES_URL) page.
+Download `Clicko-Setup-v0.3.0.exe` from the [GitHub Releases](Clicko-Setup-v0.3.0.exe) page.
 
 ### Install
 1. Download and run the installer.
