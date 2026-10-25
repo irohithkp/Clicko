@@ -18,9 +18,11 @@ internal sealed class ActivityTracker : IDisposable
     private const int WmSysKeyDown = 0x0104;
     private const int WmSysKeyUp = 0x0105;
     private const int WmLeftButtonDown = 0x0201;
+    private const int WmLeftButtonUp = 0x0202;
     private const int WmRightButtonDown = 0x0204;
     private const int WmMiddleButtonDown = 0x0207;
     private const int WmXButtonDown = 0x020B;
+    private const int WmMouseMove = 0x0200;
     private const uint LlkhfInjected = 0x0010;
     private const uint LlkhfLowerIntegrityInjected = 0x0002;
     private const uint LlmhfInjected = 0x0001;
@@ -33,6 +35,9 @@ internal sealed class ActivityTracker : IDisposable
     private IntPtr _mouseHook;
 
     public event Action<InputActivity>? ActivityDetected;
+    public event Func<int, int, bool>? LeftButtonPressed;
+    public event Func<int, int, bool>? PointerMovedWhileDragging;
+    public event Func<bool>? LeftButtonReleased;
 
     public ActivityTracker()
     {
@@ -109,8 +114,37 @@ internal sealed class ActivityTracker : IDisposable
         if (code >= 0)
         {
             var mouseData = Marshal.PtrToStructure<MouseHookData>(data);
-            var isButtonDown = message.ToInt32() is WmLeftButtonDown or WmRightButtonDown or WmMiddleButtonDown or WmXButtonDown;
-            if (isButtonDown && (mouseData.Flags & (LlmhfInjected | LlmhfLowerIntegrityInjected)) == 0)
+            var mouseMessage = message.ToInt32();
+            if (mouseMessage == WmMouseMove &&
+                (PointerMovedWhileDragging?.Invoke(mouseData.X, mouseData.Y) ?? false))
+            {
+                return new IntPtr(1);
+            }
+
+            var isPhysical = (mouseData.Flags & (LlmhfInjected | LlmhfLowerIntegrityInjected)) == 0;
+            if (mouseMessage == WmLeftButtonDown)
+            {
+                var clickoHandled = LeftButtonPressed?.Invoke(mouseData.X, mouseData.Y) ?? false;
+                if (clickoHandled)
+                {
+                    if (isPhysical)
+                    {
+                        ActivityDetected?.Invoke(InputActivity.Mouse);
+                    }
+
+                    return new IntPtr(1);
+                }
+            }
+            else if (mouseMessage == WmLeftButtonUp)
+            {
+                if (LeftButtonReleased?.Invoke() ?? false)
+                {
+                    return new IntPtr(1);
+                }
+            }
+
+            var isButtonDown = mouseMessage is WmLeftButtonDown or WmRightButtonDown or WmMiddleButtonDown or WmXButtonDown;
+            if (isButtonDown && isPhysical)
             {
                 ActivityDetected?.Invoke(InputActivity.Mouse);
             }

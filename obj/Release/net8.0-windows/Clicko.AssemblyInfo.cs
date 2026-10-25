@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Clicko")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+d7c188f4ca1f71f92c00cf61803fb3d00c991c9c")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+eeeaaba40339d24e34d470d99224c24207ea8433")]
 [assembly: System.Reflection.AssemblyProductAttribute("Clicko")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Clicko")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

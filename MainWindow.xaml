@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Clicko"
         Icon="Clicko.ico"
+        WindowStartupLocation="CenterScreen"
         Width="224"
         Height="232"
         WindowStyle="None"
@@ -58,28 +59,6 @@
                            FontWeight="SemiBold"
                            VerticalAlignment="Center"
                            Text="0" />
-                <Button x:Name="CloseButton"
-                        Margin="7,0,0,0"
-                        Padding="6,2"
-                        Background="#FF604943"
-                        Foreground="#FFFFF6E8"
-                        BorderThickness="0"
-                        FontSize="10"
-                        Content="×"
-                        Click="CloseButton_Click"
-                        Visibility="Collapsed"
-                        ToolTip="Close Clicko" />
-                <Button x:Name="ModeButton"
-                        Margin="5,0,0,0"
-                        Padding="6,2"
-                        Background="#FF604943"
-                        Foreground="#FFFFF6E8"
-                        BorderThickness="0"
-                        FontSize="10"
-                        Content="Done"
-                        Click="ModeButton_Click"
-                        Visibility="Collapsed"
-                        ToolTip="Return to click-through mode" />
             </StackPanel>
         </Border>
 
@@ -92,7 +71,10 @@
                Stretch="Uniform"
                SnapsToDevicePixels="True"
                RenderOptions.BitmapScalingMode="NearestNeighbor"
-               MouseLeftButtonDown="CatSprite_MouseLeftButtonDown" />
+               MouseLeftButtonDown="CatSprite_MouseLeftButtonDown"
+               MouseMove="CatSprite_MouseMove"
+               MouseLeftButtonUp="CatSprite_MouseLeftButtonUp"
+               LostMouseCapture="CatSprite_LostMouseCapture" />
         <TextBlock x:Name="SleepGlyph"
                    Grid.Row="1"
                    HorizontalAlignment="Right"

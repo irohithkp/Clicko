@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -13,14 +14,20 @@ namespace Clicko;
 public partial class MainWindow : Window
 {
     private const int SpriteSize = 160;
-    private const int ToggleHotkeyId = 1;
-    private const int QuitHotkeyId = 2;
+    private const int QuitHotkeyId = 1;
     private const int WmHotkey = 0x0312;
+    private const int WmNcHitTest = 0x0084;
+    private const int WmLeftButtonDown = 0x0201;
+    private const int WmLeftButtonUp = 0x0202;
+    private const int WmMouseMove = 0x0200;
     private const int GwlExStyle = -20;
     private const int WsExTransparent = 0x00000020;
-    private const uint SwpNoSize = 0x0001;
+    private const int HtClient = 1;
+    private const int HtTransparent = -1;
     private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoSize = 0x0001;
     private const uint SwpNoZOrder = 0x0004;
+    private const uint SwpNoActivate = 0x0010;
     private const uint SwpFrameChanged = 0x0020;
     private static readonly string[] KeyboardAnimation =
         ["cat-keyboard-1.png", "cat-keyboard-2.png", "cat-keyboard-3.png", "cat-keyboard-2.png"];
@@ -37,8 +44,6 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, byte[]> _spriteAlphaMasks = new();
     private HwndSource? _windowSource;
     private string _currentSpriteName = "cat-idle.png";
-    private bool _clickThrough = true;
-    private bool _toggleHotkeyRegistered;
     private bool _quitHotkeyRegistered;
     private long _keyboardCount;
     private long _mouseCount;
@@ -47,12 +52,19 @@ public partial class MainWindow : Window
     private bool _actionAnimation;
     private bool _sleeping;
     private bool _loopAnimation;
+    private bool _isDragging;
+    private bool _leftPressIntercepted;
+    private NativeMethods.NativePoint _dragStartCursor;
+    private NativeMethods.NativeRect _dragStartWindow;
     private DateTime _actionActiveUntil;
 
     public MainWindow()
     {
         InitializeComponent();
         _activityTracker.ActivityDetected += ActivityTracker_ActivityDetected;
+        _activityTracker.LeftButtonPressed += ActivityTracker_LeftButtonPressed;
+        _activityTracker.PointerMovedWhileDragging += ActivityTracker_PointerMovedWhileDragging;
+        _activityTracker.LeftButtonReleased += ActivityTracker_LeftButtonReleased;
         _animationTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(115) };
         _animationTimer.Tick += AnimationTimer_Tick;
         _blinkTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
@@ -81,33 +93,29 @@ public partial class MainWindow : Window
             return;
         }
 
-        _toggleHotkeyRegistered = NativeMethods.RegisterHotKey(
-            _windowSource.Handle, ToggleHotkeyId, NativeMethods.ModControl | NativeMethods.ModAlt | NativeMethods.ModNoRepeat, 'B');
-        var toggleHotkeyError = _toggleHotkeyRegistered ? 0 : Marshal.GetLastWin32Error();
         _quitHotkeyRegistered = NativeMethods.RegisterHotKey(
             _windowSource.Handle, QuitHotkeyId, NativeMethods.ModControl | NativeMethods.ModAlt | NativeMethods.ModNoRepeat, 'Q');
         var quitHotkeyError = _quitHotkeyRegistered ? 0 : Marshal.GetLastWin32Error();
 
-        if (!_toggleHotkeyRegistered)
-        {
-            _clickThrough = false;
-            MessageBox.Show(
-                $"Could not register Ctrl+Alt+B (Windows error {toggleHotkeyError}). The pet opened in interactive mode; use the buttons to drag or quit.",
-                "Clicko",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-        }
-        else
+        try
         {
             SetClickThrough(true);
         }
-
-        UpdateModeControls();
+        catch (Win32Exception exception)
+        {
+            MessageBox.Show(
+                $"Clicko could not enable click-through mode.\n\n{exception.Message}",
+                "Clicko",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            Close();
+            return;
+        }
 
         if (!_quitHotkeyRegistered)
         {
             MessageBox.Show(
-                $"Could not register Ctrl+Alt+Q (Windows error {quitHotkeyError}). Quit from the pet's interactive mode instead.",
+                $"Could not register Ctrl+Alt+Q (Windows error {quitHotkeyError}). You may need to close Clicko from Task Manager.",
                 "Clicko",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -144,16 +152,14 @@ public partial class MainWindow : Window
         _blinkTimer.Stop();
         _inactivityTimer.Stop();
         _activityTracker.ActivityDetected -= ActivityTracker_ActivityDetected;
+        _activityTracker.LeftButtonPressed -= ActivityTracker_LeftButtonPressed;
+        _activityTracker.PointerMovedWhileDragging -= ActivityTracker_PointerMovedWhileDragging;
+        _activityTracker.LeftButtonReleased -= ActivityTracker_LeftButtonReleased;
         _activityTracker.Dispose();
 
         if (_windowSource is not null)
         {
             _windowSource.RemoveHook(WindowMessageHook);
-
-            if (_toggleHotkeyRegistered)
-            {
-                NativeMethods.UnregisterHotKey(_windowSource.Handle, ToggleHotkeyId);
-            }
 
             if (_quitHotkeyRegistered)
             {
@@ -164,21 +170,27 @@ public partial class MainWindow : Window
 
     private IntPtr WindowMessageHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+        if (message == WmNcHitTest && !_isDragging)
+        {
+            if (IsCursorOverVisibleCatPixel())
+            {
+                handled = true;
+                return new IntPtr(HtClient);
+            }
+
+            handled = true;
+            return new IntPtr(HtTransparent);
+        }
+
         if (message != WmHotkey)
         {
             return IntPtr.Zero;
         }
 
-        switch (wParam.ToInt32())
+        if (wParam.ToInt32() == QuitHotkeyId)
         {
-            case ToggleHotkeyId:
-                SetClickThrough(!_clickThrough);
-                handled = true;
-                break;
-            case QuitHotkeyId:
-                Close();
-                handled = true;
-                break;
+            Close();
+            handled = true;
         }
 
         return IntPtr.Zero;
@@ -186,48 +198,238 @@ public partial class MainWindow : Window
 
     private void SetClickThrough(bool enabled)
     {
-        _clickThrough = enabled;
         var handle = new WindowInteropHelper(this).Handle;
         var extendedStyle = NativeMethods.GetWindowLong(handle, GwlExStyle);
-        extendedStyle = enabled
+        var updatedStyle = enabled
             ? extendedStyle | WsExTransparent
             : extendedStyle & ~WsExTransparent;
-        NativeMethods.SetWindowLong(handle, GwlExStyle, extendedStyle);
-        NativeMethods.SetWindowPos(
-            handle,
+        if (updatedStyle == extendedStyle)
+        {
+            return;
+        }
+
+        Marshal.SetLastPInvokeError(0);
+        var previousStyle = NativeMethods.SetWindowLong(handle, GwlExStyle, updatedStyle);
+        var error = Marshal.GetLastWin32Error();
+        if (previousStyle == 0 && error != 0)
+        {
+            throw new Win32Exception(error, "Unable to update Clicko's mouse input style.");
+        }
+
+        if (!NativeMethods.SetWindowPos(
+            handle, IntPtr.Zero, 0, 0, 0, 0,
+            SwpNoMove | SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpFrameChanged))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to update Clicko window styles.");
+        }
+
+    }
+
+    private bool ActivityTracker_LeftButtonPressed(int screenX, int screenY)
+    {
+        if (_isDragging ||
+            _spriteAlphaMasks.Count == 0 ||
+            !IsVisibleCatPixel(CatSprite.PointFromScreen(new Point(screenX, screenY))))
+        {
+            return false;
+        }
+
+        SetClickThrough(false);
+        var handle = new WindowInteropHelper(this).Handle;
+        NativeMethods.SetCapture(handle);
+        if (NativeMethods.GetCapture() != handle)
+        {
+            SetClickThrough(true);
+            throw new InvalidOperationException("Unable to capture the initial mouse press on Clicko.");
+        }
+
+        _leftPressIntercepted = true;
+        ForwardMouseMessage(WmLeftButtonDown, 1, screenX, screenY);
+        if (!_isDragging)
+        {
+            NativeMethods.ReleaseCapture();
+            SetClickThrough(true);
+        }
+
+        return true;
+    }
+
+    private bool ActivityTracker_PointerMovedWhileDragging(int screenX, int screenY)
+    {
+        if (!_isDragging)
+        {
+            return false;
+        }
+
+        ForwardMouseMessage(WmMouseMove, 1, screenX, screenY);
+        return true;
+    }
+
+    private bool ActivityTracker_LeftButtonReleased()
+    {
+        if (_isDragging)
+        {
+            ForwardMouseMessage(WmLeftButtonUp, 0, 0, 0);
+            return true;
+        }
+
+        if (_leftPressIntercepted)
+        {
+            _leftPressIntercepted = false;
+            NativeMethods.ReleaseCapture();
+            SetClickThrough(true);
+            return true;
+        }
+
+        return false;
+    }
+
+    private void ForwardMouseMessage(int message, int buttonState, int screenX, int screenY)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        var clientPoint = new NativeMethods.NativePoint { X = screenX, Y = screenY };
+        if (!NativeMethods.ScreenToClient(handle, ref clientPoint))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to convert the cursor position for Clicko.");
+        }
+
+        var coordinates = unchecked((int)((ushort)clientPoint.X | ((uint)(ushort)clientPoint.Y << 16)));
+        NativeMethods.SendMessage(handle, message, new IntPtr(buttonState), new IntPtr(coordinates));
+    }
+
+    private bool IsCursorOverVisibleCatPixel()
+    {
+        if (_spriteAlphaMasks.Count == 0)
+        {
+            return false;
+        }
+
+        if (!NativeMethods.GetCursorPos(out var cursorPosition))
+        {
+            return false;
+        }
+
+        var localPosition = CatSprite.PointFromScreen(new Point(cursorPosition.X, cursorPosition.Y));
+        return IsVisibleCatPixel(localPosition);
+    }
+
+    private bool IsVisibleCatPixel(Point position)
+    {
+        if (!_spriteAlphaMasks.TryGetValue(_currentSpriteName, out var alphaMask) ||
+            position.X < 0 ||
+            position.Y < 0 ||
+            position.X >= CatSprite.ActualWidth ||
+            position.Y >= CatSprite.ActualHeight)
+        {
+            return false;
+        }
+
+        var x = Math.Min(SpriteSize - 1, (int)(position.X / CatSprite.ActualWidth * SpriteSize));
+        var y = Math.Min(SpriteSize - 1, (int)(position.Y / CatSprite.ActualHeight * SpriteSize));
+        return alphaMask[y * SpriteSize + x] > 12;
+    }
+
+    private void BuildSpriteAlphaMasks()
+    {
+        foreach (var sprite in _sprites)
+        {
+            if (sprite.Value.PixelWidth != SpriteSize || sprite.Value.PixelHeight != SpriteSize)
+            {
+                throw new InvalidDataException(
+                    $"Sprite '{sprite.Key}' must be {SpriteSize} by {SpriteSize} pixels.");
+            }
+
+            var pixels = new byte[SpriteSize * SpriteSize * 4];
+            new FormatConvertedBitmap(sprite.Value, PixelFormats.Bgra32, null, 0)
+                .CopyPixels(pixels, SpriteSize * 4, 0);
+            var alphaMask = new byte[SpriteSize * SpriteSize];
+            for (var pixelIndex = 0; pixelIndex < alphaMask.Length; pixelIndex++)
+            {
+                alphaMask[pixelIndex] = pixels[pixelIndex * 4 + 3];
+            }
+
+            _spriteAlphaMasks.Add(sprite.Key, alphaMask);
+        }
+    }
+
+    private void CatSprite_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var position = e.GetPosition(CatSprite);
+        var visiblePixel = IsVisibleCatPixel(position);
+        if (e.ChangedButton != MouseButton.Left || !visiblePixel)
+        {
+            return;
+        }
+
+        if (!NativeMethods.GetCursorPos(out _dragStartCursor))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to read the cursor position.");
+        }
+
+        if (!NativeMethods.GetWindowRect(new WindowInteropHelper(this).Handle, out _dragStartWindow))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to read Clicko's window position.");
+        }
+
+        _isDragging = true;
+        if (!Mouse.Capture(CatSprite, CaptureMode.SubTree))
+        {
+            _isDragging = false;
+            SetClickThrough(true);
+            return;
+        }
+
+        e.Handled = true;
+    }
+
+    private void CatSprite_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_isDragging)
+        {
+            return;
+        }
+
+        if (!NativeMethods.GetCursorPos(out var cursorPosition))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to read the cursor position.");
+        }
+
+        var x = _dragStartWindow.Left + cursorPosition.X - _dragStartCursor.X;
+        var y = _dragStartWindow.Top + cursorPosition.Y - _dragStartCursor.Y;
+        if (!NativeMethods.SetWindowPos(
+            new WindowInteropHelper(this).Handle,
             IntPtr.Zero,
+            x,
+            y,
             0,
             0,
-            0,
-            0,
-            SwpNoSize | SwpNoMove | SwpNoZOrder | SwpFrameChanged);
-        UpdateModeControls();
+            SwpNoSize | SwpNoZOrder | SwpNoActivate))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to move Clicko while dragging.");
+        }
+
+        e.Handled = true;
     }
 
-    private void UpdateModeControls()
+    private void CatSprite_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        ModeButton.Visibility = _clickThrough ? Visibility.Collapsed : Visibility.Visible;
-        CloseButton.Visibility = _clickThrough ? Visibility.Collapsed : Visibility.Visible;
-    }
-
-    private void ModeButton_Click(object sender, RoutedEventArgs e)
-    {
-        SetClickThrough(!_clickThrough);
-    }
-
-    private void CloseButton_Click(object sender, RoutedEventArgs e)
-    {
-        Close();
-    }
-
-    private void CatSprite_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
-    {
-        if (!_clickThrough &&
-            e.ChangedButton == System.Windows.Input.MouseButton.Left &&
-            IsVisibleCatPixel(e.GetPosition(CatSprite)))
+        if (_isDragging && e.ChangedButton == MouseButton.Left)
         {
             e.Handled = true;
-            DragMove();
+            Mouse.Capture(null);
+            _isDragging = false;
+            _leftPressIntercepted = false;
+            SetClickThrough(true);
+        }
+    }
+
+    private void CatSprite_LostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (_isDragging)
+        {
+            _isDragging = false;
+            _leftPressIntercepted = false;
+            SetClickThrough(true);
         }
     }
 
@@ -293,48 +495,15 @@ public partial class MainWindow : Window
             sprite.CacheOption = BitmapCacheOption.OnLoad;
             sprite.UriSource = new Uri(path, UriKind.Absolute);
             sprite.EndInit();
+            if (sprite.PixelWidth != SpriteSize || sprite.PixelHeight != SpriteSize)
+            {
+                throw new InvalidDataException(
+                    $"Sprite '{name}' must be {SpriteSize} by {SpriteSize} pixels.");
+            }
+
             sprite.Freeze();
             _sprites.Add(name, sprite);
         }
-    }
-
-    private void BuildSpriteAlphaMasks()
-    {
-        foreach (var sprite in _sprites)
-        {
-            if (sprite.Value.PixelWidth != SpriteSize || sprite.Value.PixelHeight != SpriteSize)
-            {
-                throw new InvalidDataException(
-                    $"Sprite '{sprite.Key}' must be {SpriteSize} by {SpriteSize} pixels.");
-            }
-
-            var pixels = new byte[SpriteSize * SpriteSize * 4];
-            new FormatConvertedBitmap(sprite.Value, PixelFormats.Bgra32, null, 0)
-                .CopyPixels(pixels, SpriteSize * 4, 0);
-            var alphaMask = new byte[SpriteSize * SpriteSize];
-            for (var pixelIndex = 0; pixelIndex < alphaMask.Length; pixelIndex++)
-            {
-                alphaMask[pixelIndex] = pixels[pixelIndex * 4 + 3];
-            }
-
-            _spriteAlphaMasks.Add(sprite.Key, alphaMask);
-        }
-    }
-
-    private bool IsVisibleCatPixel(Point position)
-    {
-        if (!_spriteAlphaMasks.TryGetValue(_currentSpriteName, out var alphaMask) ||
-            position.X < 0 ||
-            position.Y < 0 ||
-            position.X >= CatSprite.ActualWidth ||
-            position.Y >= CatSprite.ActualHeight)
-        {
-            return false;
-        }
-
-        var x = Math.Min(SpriteSize - 1, (int)(position.X / CatSprite.ActualWidth * SpriteSize));
-        var y = Math.Min(SpriteSize - 1, (int)(position.Y / CatSprite.ActualHeight * SpriteSize));
-        return alphaMask[y * SpriteSize + x] > 12;
     }
 
     private void PlayActionAnimation(string[] frames)
@@ -439,6 +608,22 @@ public partial class MainWindow : Window
 
 internal static class NativeMethods
 {
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
     internal const uint ModAlt = 0x0001;
     internal const uint ModControl = 0x0002;
     internal const uint ModNoRepeat = 0x4000;
@@ -454,10 +639,35 @@ internal static class NativeMethods
     [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
     internal static extern int GetWindowLong(IntPtr hWnd, int index);
 
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)]
     internal static extern int SetWindowLong(IntPtr hWnd, int index, int value);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetCursorPos(out NativePoint point);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetWindowRect(IntPtr hWnd, out NativeRect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern IntPtr SetCapture(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern IntPtr GetCapture();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ScreenToClient(IntPtr hWnd, ref NativePoint point);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW", SetLastError = true)]
+    internal static extern IntPtr SendMessage(IntPtr hWnd, int message, IntPtr wParam, IntPtr lParam);
 }
