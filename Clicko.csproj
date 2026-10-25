@@ -5,8 +5,10 @@
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationIcon>Clicko.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <Content Include="Sprites\cat-*.png" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="Clicko.ico" />
   </ItemGroup>
 </Project>

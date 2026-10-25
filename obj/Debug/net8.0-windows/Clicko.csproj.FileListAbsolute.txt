@@ -26,3 +26,5 @@ D:\new one\bin\Debug\net8.0-windows\Sprites\cat-keyboard-3.png
 D:\new one\bin\Debug\net8.0-windows\Sprites\cat-mouse-1.png
 D:\new one\bin\Debug\net8.0-windows\Sprites\cat-mouse-2.png
 D:\new one\bin\Debug\net8.0-windows\Sprites\cat-mouse-3.png
+D:\new one\bin\Debug\net8.0-windows\Sprites\cat-sleep.png
+D:\new one\obj\Debug\net8.0-windows\Clicko.sourcelink.json

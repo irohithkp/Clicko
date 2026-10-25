@@ -15,5 +15,6 @@
 [assembly: System.Windows.Resources.AssemblyAssociatedContentFileAttribute("sprites/cat-mouse-1.png")]
 [assembly: System.Windows.Resources.AssemblyAssociatedContentFileAttribute("sprites/cat-mouse-2.png")]
 [assembly: System.Windows.Resources.AssemblyAssociatedContentFileAttribute("sprites/cat-mouse-3.png")]
+[assembly: System.Windows.Resources.AssemblyAssociatedContentFileAttribute("sprites/cat-sleep.png")]
 
 

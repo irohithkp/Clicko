@@ -1,8 +1,12 @@
 {
   "version": 2,
-  "dgSpecHash": "zFlaTcPxagc=",
+  "dgSpecHash": "4QmnMGbjFDA=",
   "success": true,
   "projectFilePath": "D:\\new one\\Clicko.csproj",
-  "expectedPackageFiles": [],
+  "expectedPackageFiles": [
+    "C:\\Users\\kproh\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.32\\microsoft.netcore.app.runtime.win-x64.8.0.32.nupkg.sha512",
+    "C:\\Users\\kproh\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.32\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.32.nupkg.sha512",
+    "C:\\Users\\kproh\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.32\\microsoft.aspnetcore.app.runtime.win-x64.8.0.32.nupkg.sha512"
+  ],
   "logs": []
 }
